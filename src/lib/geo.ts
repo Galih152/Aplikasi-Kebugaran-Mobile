@@ -16,9 +16,11 @@ export function haversineKm(a: GeoPoint, b: GeoPoint): number {
 
 function speedLimits(sport: Sport) {
   return sport === 'run'
-    ? { minSpeed: 2, maxSpeed: 25 }
-    : { minSpeed: 4, maxSpeed: 80 }
+    ? { minSpeed: 1.2, maxSpeed: 25 }
+    : { minSpeed: 2.5, maxSpeed: 80 }
 }
+
+export type MovementReason = 'accuracy' | 'distance' | 'speed' | 'ok'
 
 /** Evaluate movement from lastAccepted → next. Does not mutate arrays. */
 export function evaluateMovement(
@@ -26,30 +28,43 @@ export function evaluateMovement(
   next: GeoPoint,
   sport: Sport,
   accuracy?: number,
-): { accepted: boolean; addedKm: number; dtSec: number } {
-  if (accuracy === undefined || accuracy > 25) {
-    return { accepted: false, addedKm: 0, dtSec: 0 }
+): { accepted: boolean; addedKm: number; dtSec: number; reason: MovementReason } {
+  if (accuracy === undefined || accuracy > 50) {
+    return { accepted: false, addedKm: 0, dtSec: 0, reason: 'accuracy' }
   }
 
   if (!lastAccepted) {
-    return { accepted: true, addedKm: 0, dtSec: 0 }
+    return { accepted: true, addedKm: 0, dtSec: 0, reason: 'ok' }
   }
 
   const distKm = haversineKm(lastAccepted, next)
   const distM = distKm * 1000
-  const minDist = Math.max(10, accuracy * 0.5)
+  const minDist = Math.max(5, accuracy * 0.35)
   if (distM < minDist) {
-    return { accepted: false, addedKm: 0, dtSec: 0 }
+    return { accepted: false, addedKm: 0, dtSec: 0, reason: 'distance' }
   }
 
-  const dtSec = Math.max(0.001, (next.t - lastAccepted.t) / 1000)
-  const speedKmh = (distKm / dtSec) * 3600
+  const dtSecRaw = Math.max(0.001, (next.t - lastAccepted.t) / 1000)
+  const speedKmh = (distKm / dtSecRaw) * 3600
   const { minSpeed, maxSpeed } = speedLimits(sport)
-  if (speedKmh < minSpeed || speedKmh > maxSpeed) {
-    return { accepted: false, addedKm: 0, dtSec: 0 }
+
+  if (speedKmh > maxSpeed) {
+    return { accepted: false, addedKm: 0, dtSec: 0, reason: 'speed' }
   }
 
-  return { accepted: true, addedKm: distKm, dtSec: Math.min(dtSec, 30) }
+  const gapOk =
+    dtSecRaw > 15 && distM >= Math.max(8, accuracy * 0.4) && speedKmh <= maxSpeed
+
+  if (speedKmh < minSpeed && !gapOk) {
+    return { accepted: false, addedKm: 0, dtSec: 0, reason: 'speed' }
+  }
+
+  return {
+    accepted: true,
+    addedKm: distKm,
+    dtSec: Math.min(dtSecRaw, 30),
+    reason: 'ok',
+  }
 }
 
 /** @deprecated Prefer evaluateMovement via hook; kept for compatibility */

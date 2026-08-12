@@ -56,7 +56,7 @@ export function useGeolocationTrack(opts: {
         const result = evaluateMovement(lastAcceptedRef.current, next, sport, accuracy)
 
         if (!lastAcceptedRef.current) {
-          if (accuracy <= 25) {
+          if (accuracy <= 50) {
             lastAcceptedRef.current = next
             pointsRef.current = [next]
             setPoints([next])
