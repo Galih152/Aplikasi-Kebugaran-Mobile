@@ -1,8 +1,10 @@
-import type { ActivitySession, Sport, UserProfile } from '@/types/fitness'
+import type { ActivitySession, ActiveDraft, Sport, UserProfile } from '@/types/fitness'
 
 const PROFILE_KEY = 'alora.fitness.profile'
 const SESSIONS_KEY = 'alora.fitness.sessions'
+const DRAFT_KEY = 'alora.fitness.activeDraft'
 const MAX_SESSIONS = 50
+const DRAFT_MAX_AGE_MS = 6 * 60 * 60 * 1000
 
 export function isProfileComplete(profile: UserProfile | null): boolean {
   if (!profile) return false
@@ -48,6 +50,30 @@ export function saveSession(session: ActivitySession): void {
 export function sessionsBySport(sport: Sport, sessions?: ActivitySession[]): ActivitySession[] {
   const list = sessions ?? loadSessions()
   return list.filter((s) => s.sport === sport)
+}
+
+export function saveActiveDraft(draft: ActiveDraft): void {
+  localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...draft, updatedAt: new Date().toISOString() }))
+}
+
+export function loadActiveDraft(): ActiveDraft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY)
+    if (!raw) return null
+    const draft = JSON.parse(raw) as ActiveDraft
+    const age = Date.now() - new Date(draft.updatedAt).getTime()
+    if (age > DRAFT_MAX_AGE_MS) {
+      clearActiveDraft()
+      return null
+    }
+    return draft
+  } catch {
+    return null
+  }
+}
+
+export function clearActiveDraft(): void {
+  localStorage.removeItem(DRAFT_KEY)
 }
 
 export function weeklyKmByDay(sessions: ActivitySession[], sport: Sport): number[] {

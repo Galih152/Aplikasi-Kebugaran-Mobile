@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActivitySession, Sport, UserProfile } from '@/types/fitness'
 import TrackingMap from '@/components/TrackingMap'
 import { useGeolocationTrack } from '@/hooks/useGeolocationTrack'
 import { calcCalories, avgSpeedKmh, paceMinPerKm, formatPace, formatSpeed } from '@/lib/calories'
 import { downsamplePoints } from '@/lib/geo'
 import { fmtTime } from '@/lib/format'
+import { clearActiveDraft, loadActiveDraft, saveActiveDraft } from '@/lib/storage'
 
 const C = {
   card: '#FFFFFF',
@@ -39,6 +40,14 @@ function IconChevronLeft({ size = 20, color = C.dark }: { size?: number; color?:
   )
 }
 
+function isStandaloneDisplay() {
+  if (typeof window === 'undefined') return false
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    ('standalone' in navigator && (navigator as Navigator & { standalone?: boolean }).standalone === true)
+  )
+}
+
 export default function TrackingScreen({
   sport,
   profile,
@@ -50,15 +59,90 @@ export default function TrackingScreen({
   onBack: () => void
   onSaved: (session: ActivitySession) => void
 }) {
+  const draftRef = useRef(loadActiveDraft())
+  const draft = draftRef.current
+  const canRestore = !!(draft && draft.sport === sport)
+
   const [running, setRunning] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
   const [startedAt, setStartedAt] = useState<string | null>(null)
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(null)
+  const [pausedAccumMs, setPausedAccumMs] = useState(0)
+  const [pauseStartedMs, setPauseStartedMs] = useState<number | null>(null)
+  const [elapsedSec, setElapsedSec] = useState(0)
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [locating, setLocating] = useState(false)
   const [locateError, setLocateError] = useState<string | null>(null)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [showInstallHint] = useState(() => !isStandaloneDisplay())
+  const restoredRef = useRef(false)
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+
   const accentColor = sport === 'run' ? C.salmon : C.teal
-  const { points, distanceKm, error, reset } = useGeolocationTrack({ active: running, sport })
+  const {
+    points,
+    distanceKm,
+    movingDurationSec,
+    error,
+    reset,
+    hydrate,
+    lastFix,
+    isMoving,
+  } = useGeolocationTrack({ active: running, sport })
+
+  const computeElapsed = useCallback(() => {
+    if (startedAtMs == null) return 0
+    const pauseExtra = pauseStartedMs != null ? Date.now() - pauseStartedMs : 0
+    const paused = pausedAccumMs + (running ? 0 : pauseExtra)
+    return Math.max(0, Math.floor((Date.now() - startedAtMs - paused) / 1000))
+  }, [startedAtMs, pausedAccumMs, pauseStartedMs, running])
+
+  const persistDraft = useCallback(() => {
+    if (startedAtMs == null || !startedAt) return
+    saveActiveDraft({
+      sport,
+      startedAt,
+      startedAtMs,
+      pausedAccumMs: pausedAccumMs + (pauseStartedMs != null && !running ? Date.now() - pauseStartedMs : 0),
+      running,
+      distanceKm,
+      movingDurationSec,
+      points,
+      updatedAt: new Date().toISOString(),
+    })
+  }, [sport, startedAt, startedAtMs, pausedAccumMs, pauseStartedMs, running, distanceKm, movingDurationSec, points])
+
+  const requestWakeLock = useCallback(async () => {
+    try {
+      if (!('wakeLock' in navigator) || !running) return
+      wakeLockRef.current = await navigator.wakeLock.request('screen')
+    } catch {
+      // best-effort
+    }
+  }, [running])
+
+  const releaseWakeLock = useCallback(async () => {
+    try {
+      await wakeLockRef.current?.release()
+    } catch {
+      // ignore
+    }
+    wakeLockRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    if (!canRestore || !draft) return
+    hydrate({
+      points: draft.points,
+      distanceKm: draft.distanceKm,
+      movingDurationSec: draft.movingDurationSec,
+    })
+    setStartedAt(draft.startedAt)
+    setStartedAtMs(draft.startedAtMs)
+    setPausedAccumMs(draft.pausedAccumMs)
+    setRunning(draft.running)
+    if (!draft.running) setPauseStartedMs(Date.now())
+  }, [canRestore, draft, hydrate])
 
   const handleLocate = () => {
     if (!navigator.geolocation) {
@@ -80,7 +164,7 @@ export default function TrackingScreen({
           setLocateError('Gagal mengambil lokasi. Coba lagi di area terbuka.')
         }
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     )
   }
 
@@ -90,62 +174,112 @@ export default function TrackingScreen({
   }, [])
 
   useEffect(() => {
-    if (running) {
-      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current)
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
-  }, [running])
+    const tick = () => setElapsedSec(computeElapsed())
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [computeElapsed])
 
   useEffect(() => {
-    if (points.length === 0) return
-    const last = points[points.length - 1]
-    setUserLocation({ lat: last.lat, lng: last.lng })
-  }, [points])
+    if (lastFix) setUserLocation({ lat: lastFix.lat, lng: lastFix.lng })
+  }, [lastFix])
+
+  useEffect(() => {
+    if (running) {
+      void requestWakeLock()
+    } else {
+      void releaseWakeLock()
+    }
+    return () => {
+      void releaseWakeLock()
+    }
+  }, [running, requestWakeLock, releaseWakeLock])
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        setElapsedSec(computeElapsed())
+        if (running) void requestWakeLock()
+      }
+      persistDraft()
+    }
+    const onHide = () => persistDraft()
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('pagehide', onHide)
+    }
+  }, [computeElapsed, persistDraft, running, requestWakeLock])
+
+  useEffect(() => {
+    if (startedAtMs == null) return
+    persistDraft()
+    const id = window.setInterval(() => persistDraft(), 5000)
+    return () => clearInterval(id)
+  }, [startedAtMs, persistDraft, points, distanceKm, movingDurationSec, running])
 
   const calories = calcCalories({
     sport,
     weightKg: profile.weightKg,
     distanceKm,
-    durationSec: elapsed,
+    durationSec: movingDurationSec,
   })
-  const speed = avgSpeedKmh(distanceKm, elapsed)
-  const pace = paceMinPerKm(distanceKm, elapsed)
+  const speed = avgSpeedKmh(distanceKm, elapsedSec)
+  const pace = paceMinPerKm(distanceKm, elapsedSec)
   const metricLabel = sport === 'run' ? 'Pace' : 'Speed'
   const metricValue = sport === 'run' ? formatPace(pace) : formatSpeed(speed)
+  const mapLocation = lastFix
+    ? { lat: lastFix.lat, lng: lastFix.lng }
+    : userLocation
 
   const handleBack = () => {
-    if (running || elapsed > 0) {
+    if (running || elapsedSec > 0) {
       const ok = window.confirm('Buang sesi tracking ini?')
       if (!ok) return
     }
+    clearActiveDraft()
+    reset()
     onBack()
   }
 
   const handleToggle = () => {
     setRunning((r) => {
-      const next = !r
-      if (next && !startedAt) setStartedAt(new Date().toISOString())
-      return next
+      if (!r) {
+        // start or resume
+        if (startedAtMs == null) {
+          const now = Date.now()
+          setStartedAt(new Date(now).toISOString())
+          setStartedAtMs(now)
+          setPausedAccumMs(0)
+          setPauseStartedMs(null)
+        } else if (pauseStartedMs != null) {
+          setPausedAccumMs((p) => p + (Date.now() - pauseStartedMs))
+          setPauseStartedMs(null)
+        }
+        return true
+      }
+      // pause
+      setPauseStartedMs(Date.now())
+      return false
     })
   }
 
   const handleSave = () => {
     const endedAt = new Date().toISOString()
+    const durationSec = computeElapsed()
     const session: ActivitySession = {
       id: crypto.randomUUID?.() ?? Date.now().toString(36),
       sport,
       startedAt: startedAt ?? endedAt,
       endedAt,
-      durationSec: elapsed,
+      durationSec,
       distanceKm: Math.round(distanceKm * 100) / 100,
       calories,
-      avgPaceOrSpeed: sport === 'run' ? pace : speed,
+      avgPaceOrSpeed: sport === 'run' ? paceMinPerKm(distanceKm, durationSec) : avgSpeedKmh(distanceKm, durationSec),
       points: downsamplePoints(points),
     }
+    clearActiveDraft()
     onSaved(session)
     reset()
     onBack()
@@ -174,12 +308,18 @@ export default function TrackingScreen({
 
       <TrackingMap
         points={points}
-        userLocation={userLocation}
+        userLocation={mapLocation}
         accentColor={accentColor}
         following={running}
         locating={locating}
         onLocate={handleLocate}
       />
+
+      {showInstallHint && (
+        <div style={{ fontSize: 11, color: C.mid, background: C.card, borderRadius: 12, padding: '10px 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+          Pasang ke Home Screen (PWA) untuk tracking lebih stabil saat layar terkunci.
+        </div>
+      )}
 
       <button
         type="button"
@@ -209,7 +349,7 @@ export default function TrackingScreen({
           <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
           <circle cx="12" cy="12" r="8" />
         </svg>
-        {locating ? 'Mengambil lokasi…' : userLocation ? 'Perbarui lokasi saya' : 'Ambil lokasi perangkat'}
+        {locating ? 'Mengambil lokasi…' : mapLocation ? 'Perbarui lokasi saya' : 'Ambil lokasi perangkat'}
       </button>
 
       {(error || locateError) && (
@@ -226,14 +366,14 @@ export default function TrackingScreen({
           <span style={{ fontSize: 16, color: C.mid, fontWeight: 500 }}>km</span>
         </div>
         <div style={{ fontSize: 12, color: C.soft, marginTop: 4 }}>
-          Target info: {sport === 'run' ? '10' : '50'} km · {sport === 'run' ? 'Lari' : 'Sepeda'}
+          {running ? (isMoving ? 'Bergerak' : 'Diam · jarak tidak naik') : 'Siap tracking'} · {sport === 'run' ? 'Lari' : 'Sepeda'}
         </div>
       </div>
 
       <div style={{ display: 'flex', gap: 10 }}>
         <div style={{ flex: 1, borderRadius: 16, background: C.card, padding: '12px 10px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', textAlign: 'center' }}>
           <div style={{ fontSize: 10, color: C.soft, marginBottom: 2 }}>Waktu</div>
-          <div style={{ fontSize: 16, fontWeight: 900, color: C.dark, fontFamily: 'Nunito, sans-serif' }}>{fmtTime(elapsed)}</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: C.dark, fontFamily: 'Nunito, sans-serif' }}>{fmtTime(elapsedSec)}</div>
         </div>
         <div style={{ flex: 1, borderRadius: 16, background: C.card, padding: '12px 10px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', textAlign: 'center' }}>
           <div style={{ fontSize: 10, color: C.soft, marginBottom: 2 }}>{metricLabel}</div>
@@ -270,14 +410,14 @@ export default function TrackingScreen({
       >
         {running ? (
           <><IconPause size={18} /> Jeda</>
-        ) : elapsed > 0 ? (
+        ) : elapsedSec > 0 ? (
           <><IconPlay size={18} /> Lanjut</>
         ) : (
           <><IconPlay size={18} /> {sport === 'run' ? 'Mulai Lari' : 'Mulai Sepeda'}</>
         )}
       </button>
 
-      {elapsed > 0 && !running && (
+      {elapsedSec > 0 && !running && (
         <button
           onClick={handleSave}
           style={{

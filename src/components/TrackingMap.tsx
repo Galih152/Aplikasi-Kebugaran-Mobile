@@ -42,17 +42,13 @@ export default function TrackingMap({
   onLocate: () => void
 }) {
   const trailEnd = points.length > 0 ? points[points.length - 1] : null
-  const focus = following && trailEnd
-    ? { lat: trailEnd.lat, lng: trailEnd.lng }
-    : userLocation
+  const focus = userLocation ?? (trailEnd ? { lat: trailEnd.lat, lng: trailEnd.lng } : null)
   const center: [number, number] = focus
     ? [focus.lat, focus.lng]
     : [-6.2, 106.816666]
 
   const latLngs = points.map((p) => [p.lat, p.lng] as [number, number])
-  const markerPos = trailEnd
-    ? { lat: trailEnd.lat, lng: trailEnd.lng }
-    : userLocation
+  const markerPos = userLocation ?? (trailEnd ? { lat: trailEnd.lat, lng: trailEnd.lng } : null)
 
   return (
     <div className="tracking-map">

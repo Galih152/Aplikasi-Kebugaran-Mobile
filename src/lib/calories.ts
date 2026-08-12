@@ -27,6 +27,7 @@ function metForCycle(speedKmh: number): number {
   return 10.0
 }
 
+/** Calories from MET × weight × moving hours (use movingDurationSec, not idle time). */
 export function calcCalories(opts: {
   sport: Sport
   weightKg: number

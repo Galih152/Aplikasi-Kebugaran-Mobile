@@ -24,3 +24,15 @@ export type ActivitySession = {
   avgPaceOrSpeed: number
   points: GeoPoint[]
 }
+
+export type ActiveDraft = {
+  sport: Sport
+  startedAt: string
+  startedAtMs: number
+  pausedAccumMs: number
+  running: boolean
+  distanceKm: number
+  movingDurationSec: number
+  points: GeoPoint[]
+  updatedAt: string
+}

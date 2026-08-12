@@ -14,36 +14,60 @@ export function haversineKm(a: GeoPoint, b: GeoPoint): number {
   return 2 * R_EARTH_KM * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
+function speedLimits(sport: Sport) {
+  return sport === 'run'
+    ? { minSpeed: 2, maxSpeed: 25 }
+    : { minSpeed: 4, maxSpeed: 80 }
+}
+
+/** Evaluate movement from lastAccepted → next. Does not mutate arrays. */
+export function evaluateMovement(
+  lastAccepted: GeoPoint | null,
+  next: GeoPoint,
+  sport: Sport,
+  accuracy?: number,
+): { accepted: boolean; addedKm: number; dtSec: number } {
+  if (accuracy === undefined || accuracy > 25) {
+    return { accepted: false, addedKm: 0, dtSec: 0 }
+  }
+
+  if (!lastAccepted) {
+    return { accepted: true, addedKm: 0, dtSec: 0 }
+  }
+
+  const distKm = haversineKm(lastAccepted, next)
+  const distM = distKm * 1000
+  const minDist = Math.max(10, accuracy * 0.5)
+  if (distM < minDist) {
+    return { accepted: false, addedKm: 0, dtSec: 0 }
+  }
+
+  const dtSec = Math.max(0.001, (next.t - lastAccepted.t) / 1000)
+  const speedKmh = (distKm / dtSec) * 3600
+  const { minSpeed, maxSpeed } = speedLimits(sport)
+  if (speedKmh < minSpeed || speedKmh > maxSpeed) {
+    return { accepted: false, addedKm: 0, dtSec: 0 }
+  }
+
+  return { accepted: true, addedKm: distKm, dtSec: Math.min(dtSec, 30) }
+}
+
+/** @deprecated Prefer evaluateMovement via hook; kept for compatibility */
 export function appendFilteredPoint(
   points: GeoPoint[],
   next: GeoPoint,
   sport: Sport,
   accuracy?: number,
 ): { points: GeoPoint[]; addedKm: number } {
-  if (accuracy !== undefined && accuracy > 40) {
-    return { points, addedKm: 0 }
-  }
-
-  if (points.length === 0) {
+  const last = points.length > 0 ? points[points.length - 1] : null
+  const result = evaluateMovement(last, next, sport, accuracy)
+  if (!last) {
     return { points: [next], addedKm: 0 }
   }
-
-  const last = points[points.length - 1]
-  const distKm = haversineKm(last, next)
-  const distM = distKm * 1000
-
-  if (distM < 3) {
+  if (!result.accepted) {
     return { points, addedKm: 0 }
   }
-
-  const dtSec = Math.max(0.001, (next.t - last.t) / 1000)
-  const speedKmh = (distKm / dtSec) * 3600
-  const maxSpeed = sport === 'run' ? 25 : 80
-  if (speedKmh > maxSpeed) {
-    return { points, addedKm: 0 }
-  }
-
-  return { points: [...points, next], addedKm: distKm }
+  return { points: [...points, next], addedKm: result.addedKm }
 }
 
 export function downsamplePoints(points: GeoPoint[], maxPoints = 500): GeoPoint[] {
