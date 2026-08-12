@@ -1,0 +1,10 @@
+{
+  "description": "Track and manage running and cycling workouts with a bright, modern mobile-friendly interface designed for fitness enthusiasts on the go.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
