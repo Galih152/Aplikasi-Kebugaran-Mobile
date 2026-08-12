@@ -53,9 +53,41 @@ export default function TrackingScreen({
   const [running, setRunning] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [startedAt, setStartedAt] = useState<string | null>(null)
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [locating, setLocating] = useState(false)
+  const [locateError, setLocateError] = useState<string | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const accentColor = sport === 'run' ? C.salmon : C.teal
   const { points, distanceKm, error, reset } = useGeolocationTrack({ active: running, sport })
+
+  const handleLocate = () => {
+    if (!navigator.geolocation) {
+      setLocateError('Geolocation tidak didukung di perangkat ini.')
+      return
+    }
+    setLocating(true)
+    setLocateError(null)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+        setLocating(false)
+      },
+      (err) => {
+        setLocating(false)
+        if (err.code === err.PERMISSION_DENIED) {
+          setLocateError('Izin lokasi ditolak. Aktifkan lokasi di pengaturan browser/HP.')
+        } else {
+          setLocateError('Gagal mengambil lokasi. Coba lagi di area terbuka.')
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 },
+    )
+  }
+
+  useEffect(() => {
+    handleLocate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (running) {
@@ -67,6 +99,12 @@ export default function TrackingScreen({
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [running])
+
+  useEffect(() => {
+    if (points.length === 0) return
+    const last = points[points.length - 1]
+    setUserLocation({ lat: last.lat, lng: last.lng })
+  }, [points])
 
   const calories = calcCalories({
     sport,
@@ -134,11 +172,49 @@ export default function TrackingScreen({
         <IconChevronLeft size={20} color={C.mid} /> Kembali
       </button>
 
-      <TrackingMap points={points} accentColor={accentColor} following={running} />
+      <TrackingMap
+        points={points}
+        userLocation={userLocation}
+        accentColor={accentColor}
+        following={running}
+        locating={locating}
+        onLocate={handleLocate}
+      />
 
-      {error && (
+      <button
+        type="button"
+        onClick={handleLocate}
+        disabled={locating}
+        style={{
+          width: '100%',
+          padding: '12px 14px',
+          borderRadius: 14,
+          border: 'none',
+          cursor: locating ? 'wait' : 'pointer',
+          background: C.card,
+          color: accentColor,
+          fontSize: 13,
+          fontWeight: 700,
+          fontFamily: 'Nunito, sans-serif',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+          opacity: locating ? 0.7 : 1,
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+          <circle cx="12" cy="12" r="8" />
+        </svg>
+        {locating ? 'Mengambil lokasi…' : userLocation ? 'Perbarui lokasi saya' : 'Ambil lokasi perangkat'}
+      </button>
+
+      {(error || locateError) && (
         <div style={{ fontSize: 12, color: '#FF3B30', fontWeight: 600, background: '#FFECEC', borderRadius: 12, padding: '10px 12px' }}>
-          {error}
+          {locateError || error}
         </div>
       )}
 

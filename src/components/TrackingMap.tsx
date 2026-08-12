@@ -1,62 +1,112 @@
 import { useEffect } from 'react'
-import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { GeoPoint } from '@/types/fitness'
 
-const defaultIcon = L.divIcon({
-  className: 'tracking-marker',
-  html: '<div style="width:14px;height:14px;border-radius:50%;background:#1C1C22;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)"></div>',
-  iconSize: [14, 14],
-  iconAnchor: [7, 7],
-})
+const userIcon = (accent: string) =>
+  L.divIcon({
+    className: 'tracking-marker',
+    html: `<div class="user-loc-pulse" style="--accent:${accent}"><span class="user-loc-dot"></span></div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  })
 
-function FollowCenter({ points, following }: { points: GeoPoint[]; following: boolean }) {
+function MapController({
+  focus,
+  following,
+}: {
+  focus: { lat: number; lng: number } | null
+  following: boolean
+}) {
   const map = useMap()
   useEffect(() => {
-    if (!following || points.length === 0) return
-    const last = points[points.length - 1]
-    map.panTo([last.lat, last.lng], { animate: true })
-  }, [points, following, map])
+    if (!focus) return
+    map.flyTo([focus.lat, focus.lng], Math.max(map.getZoom(), 16), { animate: true, duration: 0.8 })
+  }, [focus?.lat, focus?.lng, following, map])
   return null
 }
 
 export default function TrackingMap({
   points,
+  userLocation,
   accentColor,
   following,
+  locating,
+  onLocate,
 }: {
   points: GeoPoint[]
+  userLocation: { lat: number; lng: number } | null
   accentColor: string
   following: boolean
+  locating: boolean
+  onLocate: () => void
 }) {
-  const center: [number, number] =
-    points.length > 0
-      ? [points[points.length - 1].lat, points[points.length - 1].lng]
-      : [-6.2, 106.816666]
+  const trailEnd = points.length > 0 ? points[points.length - 1] : null
+  const focus = following && trailEnd
+    ? { lat: trailEnd.lat, lng: trailEnd.lng }
+    : userLocation
+  const center: [number, number] = focus
+    ? [focus.lat, focus.lng]
+    : [-6.2, 106.816666]
 
   const latLngs = points.map((p) => [p.lat, p.lng] as [number, number])
+  const markerPos = trailEnd
+    ? { lat: trailEnd.lat, lng: trailEnd.lng }
+    : userLocation
 
   return (
     <div className="tracking-map">
       <MapContainer
         center={center}
-        zoom={16}
-        scrollWheelZoom={false}
+        zoom={15}
+        scrollWheelZoom={true}
+        zoomControl={false}
         style={{ height: '100%', width: '100%' }}
         attributionControl={false}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+          subdomains="abcd"
+          maxZoom={20}
         />
         {latLngs.length > 1 && (
-          <Polyline positions={latLngs} pathOptions={{ color: accentColor, weight: 4 }} />
+          <Polyline
+            positions={latLngs}
+            pathOptions={{ color: accentColor, weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
+          />
         )}
-        {points.length > 0 && (
-          <Marker position={[points[points.length - 1].lat, points[points.length - 1].lng]} icon={defaultIcon} />
+        {markerPos && (
+          <>
+            <CircleMarker
+              center={[markerPos.lat, markerPos.lng]}
+              radius={18}
+              pathOptions={{ color: accentColor, fillColor: accentColor, fillOpacity: 0.15, weight: 0 }}
+            />
+            <Marker position={[markerPos.lat, markerPos.lng]} icon={userIcon(accentColor)} />
+          </>
         )}
-        <FollowCenter points={points} following={following} />
+        <MapController focus={focus} following={following} />
       </MapContainer>
+
+      <button
+        type="button"
+        className="locate-btn"
+        onClick={onLocate}
+        disabled={locating}
+        aria-label="Ambil lokasi perangkat"
+        title="Ambil lokasi saya"
+      >
+        {locating ? (
+          <span className="locate-spinner" />
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+            <circle cx="12" cy="12" r="8" />
+          </svg>
+        )}
+      </button>
     </div>
   )
 }
