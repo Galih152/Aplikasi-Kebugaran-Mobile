@@ -1,6 +1,7 @@
 import { getToken } from '@/lib/auth'
 
-export const BASE_URL = '/api'
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+export const BASE_URL = API_BASE ? `${API_BASE}/api` : '/api'
 
 function authHeaders(): Record<string, string> {
   const token = getToken()
