@@ -12,9 +12,10 @@ import {
 import { fmtTime, fmtDateId, fmtDurationHours, formatPace, formatSpeed } from '@/lib/format'
 import { fetchMe, logout as apiLogout } from '@/lib/api'
 import {
-  clearAuthUser,
+  clearAuth,
   getDisplayName,
-  mapMeResponse,
+  getToken,
+  mapAuthUser,
   saveAuthUser,
   type AuthUser,
 } from '@/lib/auth'
@@ -550,16 +551,26 @@ export default function App() {
     let cancelled = false
 
     const bootstrapAuth = async () => {
+      const token = getToken()
+      if (!token) {
+        if (!cancelled) {
+          clearAuth()
+          setAuthUser(null)
+          setAuthLoading(false)
+        }
+        return
+      }
+
       try {
         const data = await fetchMe()
-        const user = mapMeResponse(data)
+        const user = mapAuthUser(data)
         if (!cancelled) {
           saveAuthUser(user)
           setAuthUser(user)
         }
       } catch {
         if (!cancelled) {
-          clearAuthUser()
+          clearAuth()
           setAuthUser(null)
         }
       } finally {
@@ -615,7 +626,7 @@ export default function App() {
     } catch (err) {
       console.error('[App] Logout error:', err)
     }
-    clearAuthUser()
+    clearAuth()
     setAuthUser(null)
     setTracking(false)
     setShowProfileSetup(false)

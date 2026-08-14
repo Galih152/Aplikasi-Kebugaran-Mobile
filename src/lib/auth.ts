@@ -1,3 +1,4 @@
+const TOKEN_KEY = 'alora.fitness.token'
 const AUTH_USER_KEY = 'alora.fitness.authUser'
 
 export type AuthUser = {
@@ -11,39 +12,32 @@ export type AuthUser = {
   employeeCode: string | null
 }
 
-type MeEmployee = {
-  employee_id?: number
-  full_name?: string
-  employee_code?: string | null
+type AuthPayload = {
+  token: string
+  user: AuthUser
 }
 
-type MeUser = {
-  id: number
-  name: string
-  email: string
-  username?: string | null
-  role: string
-  employee?: MeEmployee | null
+type MePayload = {
+  user: AuthUser
 }
 
-export function mapMeResponse(data: { user: MeUser }): AuthUser {
+export function mapAuthUser(data: AuthPayload | MePayload): AuthUser {
   const user = data.user
-  const employee = user.employee
 
-  if (!employee?.employee_id) {
+  if (!user?.employeeId) {
     throw new Error('Akun tidak terdaftar sebagai karyawan aktif')
   }
 
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    username: user.username ?? null,
-    role: user.role,
-    employeeId: employee.employee_id,
-    employeeName: employee.full_name || user.name,
-    employeeCode: employee.employee_code ?? null,
-  }
+  return user
+}
+
+export function setAuth(token: string, user: AuthUser): void {
+  localStorage.setItem(TOKEN_KEY, token)
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user))
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
 }
 
 export function saveAuthUser(user: AuthUser): void {
@@ -60,7 +54,8 @@ export function loadAuthUser(): AuthUser | null {
   }
 }
 
-export function clearAuthUser(): void {
+export function clearAuth(): void {
+  localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(AUTH_USER_KEY)
 }
 

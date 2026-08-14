@@ -1,11 +1,18 @@
-export const BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/$/, '')
+import { getToken } from '@/lib/auth'
+
+export const BASE_URL = '/api'
+
+function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 export async function api(path: string, options: RequestInit = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...options.headers,
     },
   })
@@ -18,10 +25,10 @@ export async function api(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
-export function login(identifier: string, password: string) {
+export function login(username: string, password: string) {
   return api('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ identifier, password }),
+    body: JSON.stringify({ username, password }),
   })
 }
 

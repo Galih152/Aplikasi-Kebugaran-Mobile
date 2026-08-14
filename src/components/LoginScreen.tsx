@@ -1,12 +1,10 @@
 import { useState } from 'react'
 import { login as apiLogin } from '@/lib/api'
-import { mapMeResponse, saveAuthUser, type AuthUser } from '@/lib/auth'
+import { mapAuthUser, setAuth, type AuthUser } from '@/lib/auth'
 
 const C = {
   card: '#FFFFFF',
   salmon: '#F4907A',
-  salmonLight: '#FDDDD6',
-  teal: '#5BBDBC',
   dark: '#1C1C22',
   mid: '#6B6B80',
   soft: '#B0B0C0',
@@ -14,7 +12,7 @@ const C = {
 }
 
 export default function LoginScreen({ onSuccess }: { onSuccess: (user: AuthUser) => void }) {
-  const [identifier, setIdentifier] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -23,16 +21,16 @@ export default function LoginScreen({ onSuccess }: { onSuccess: (user: AuthUser)
     e.preventDefault()
     setError('')
 
-    if (!identifier.trim() || !password) {
-      setError('Email/username dan password wajib diisi')
+    if (!username.trim() || !password) {
+      setError('Username dan password wajib diisi')
       return
     }
 
     setLoading(true)
     try {
-      const data = await apiLogin(identifier.trim(), password)
-      const user = mapMeResponse(data)
-      saveAuthUser(user)
+      const data = await apiLogin(username.trim(), password)
+      const user = mapAuthUser(data)
+      setAuth(data.token, user)
       onSuccess(user)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login gagal')
@@ -66,7 +64,7 @@ export default function LoginScreen({ onSuccess }: { onSuccess: (user: AuthUser)
           Aplikasi Bugar
         </div>
         <div style={{ fontSize: 14, color: C.mid, lineHeight: 1.5 }}>
-          Masuk dengan akun Alora untuk tracking dan leaderboard
+          Masuk dengan username Alora untuk tracking dan leaderboard
         </div>
       </div>
 
@@ -83,13 +81,13 @@ export default function LoginScreen({ onSuccess }: { onSuccess: (user: AuthUser)
         }}
       >
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: C.mid }}>Email atau Username</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.mid }}>Username</span>
           <input
             type="text"
             autoComplete="username"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="nama.pengguna"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="username"
             disabled={loading}
             style={{
               border: '1.5px solid #E8E8EE',
@@ -149,10 +147,6 @@ export default function LoginScreen({ onSuccess }: { onSuccess: (user: AuthUser)
           {loading ? 'Memproses...' : 'Masuk'}
         </button>
       </form>
-
-      <div style={{ fontSize: 11, color: C.soft, textAlign: 'center', lineHeight: 1.5 }}>
-        API lokal: backend-superapp (port 3000)
-      </div>
     </div>
   )
 }
