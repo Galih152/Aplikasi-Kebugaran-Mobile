@@ -19,8 +19,14 @@ export async function api(path: string, options: RequestInit = {}) {
   })
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: 'Network error' }))
-    throw new Error(err.message || 'Request failed')
+    let message = 'Network error'
+    if (res.status === 404) {
+      message = 'API tidak ditemukan. Pastikan deploy Vercel sudah include serverless /api.'
+    } else {
+      const err = await res.json().catch(() => null)
+      message = err?.message || `Request failed (${res.status})`
+    }
+    throw new Error(message)
   }
 
   return res.json()
