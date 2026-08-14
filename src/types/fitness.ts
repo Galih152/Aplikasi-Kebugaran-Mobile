@@ -4,6 +4,7 @@ export type UserProfile = {
   heightCm: number
   weightKg: number
   name?: string
+  employeeId?: number
   updatedAt: string
 }
 
@@ -23,6 +24,8 @@ export type ActivitySession = {
   calories: number
   avgPaceOrSpeed: number
   points: GeoPoint[]
+  employeeId?: number
+  employeeName?: string
 }
 
 export type ActiveDraft = {

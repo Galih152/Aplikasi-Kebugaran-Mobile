@@ -10,8 +10,19 @@ import {
   weekTotals,
 } from '@/lib/storage'
 import { fmtTime, fmtDateId, fmtDurationHours, formatPace, formatSpeed } from '@/lib/format'
+import { fetchMe, logout as apiLogout } from '@/lib/api'
+import {
+  clearAuthUser,
+  getDisplayName,
+  mapMeResponse,
+  saveAuthUser,
+  type AuthUser,
+} from '@/lib/auth'
+import { saveSessionRemote } from '@/lib/fitnessRemote'
 import ProfileSetup from '@/components/ProfileSetup'
 import TrackingScreen from '@/components/TrackingScreen'
+import LoginScreen from '@/components/LoginScreen'
+import LeaderboardScreen from '@/components/LeaderboardScreen'
 
 /* ─── TOKENS ──────────────────────────────────────────────── */
 const C = {
@@ -29,7 +40,7 @@ const C = {
   cardBg2: '#F5F5F8',
 }
 
-type Tab = 'home' | 'activity' | 'diary' | 'marathon'
+type Tab = 'home' | 'activity' | 'diary' | 'leaderboard' | 'marathon'
 
 const WEEK_DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
@@ -135,20 +146,20 @@ function HomeScreen({
   sport,
   setSport,
   sessions,
-  profile,
+  authUser,
   onStartActivity,
 }: {
   sport: Sport
   setSport: (s: Sport) => void
   sessions: ActivitySession[]
-  profile: UserProfile | null
+  authUser: AuthUser
   onStartActivity: () => void
 }) {
   const totals = weekTotals(sessions, sport)
   const weekly = totals.weekly
   const totalKm = totals.totalKm.toFixed(1)
   const accentColor = sport === 'run' ? C.salmon : C.teal
-  const displayName = profile?.name || 'Pengguna'
+  const displayName = getDisplayName(authUser)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -413,10 +424,14 @@ function StatsScreen({ sport, sessions }: { sport: Sport; sessions: ActivitySess
 /* ─── PROFILE SCREEN ──────────────────────────────────────── */
 function ProfileScreen({
   profile,
+  authUser,
   onEdit,
+  onLogout,
 }: {
   profile: UserProfile | null
+  authUser: AuthUser
   onEdit: () => void
+  onLogout: () => void
 }) {
   const bmi =
     profile && isProfileComplete(profile)
@@ -429,8 +444,11 @@ function ProfileScreen({
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '16px 0' }}>
         <Avatar size={72} />
         <div style={{ fontSize: 20, fontWeight: 900, color: C.dark, fontFamily: 'Nunito, sans-serif' }}>
-          {profile?.name || 'Pengguna'}
+          {getDisplayName(authUser)}
         </div>
+        {authUser.employeeCode && (
+          <div style={{ fontSize: 12, color: C.mid, fontWeight: 600 }}>{authUser.employeeCode}</div>
+        )}
         <div style={{ fontSize: 12, color: C.soft }}>Data tubuh untuk estimasi kalori</div>
       </div>
 
@@ -470,7 +488,43 @@ function ProfileScreen({
         >
           {isProfileComplete(profile) ? 'Edit Data Tubuh' : 'Isi Data Tubuh'}
         </button>
+        <button
+          onClick={onLogout}
+          style={{
+            marginTop: 10,
+            width: '100%',
+            padding: 12,
+            borderRadius: 14,
+            border: '1.5px solid #E8E8EE',
+            cursor: 'pointer',
+            background: 'transparent',
+            color: C.mid,
+            fontWeight: 700,
+            fontSize: 13,
+          }}
+        >
+          Keluar
+        </button>
       </div>
+    </div>
+  )
+}
+
+function AuthLoadingScreen() {
+  return (
+    <div
+      style={{
+        minHeight: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: C.bg,
+        color: C.mid,
+        fontSize: 14,
+        fontWeight: 600,
+      }}
+    >
+      Memuat...
     </div>
   )
 }
@@ -484,10 +538,39 @@ export default function App() {
   const [sessions, setSessions] = useState<ActivitySession[]>([])
   const [showProfileSetup, setShowProfileSetup] = useState(false)
   const [pendingTrack, setPendingTrack] = useState(false)
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
 
   useEffect(() => {
     setProfile(loadProfile())
     setSessions(loadSessions())
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const bootstrapAuth = async () => {
+      try {
+        const data = await fetchMe()
+        const user = mapMeResponse(data)
+        if (!cancelled) {
+          saveAuthUser(user)
+          setAuthUser(user)
+        }
+      } catch {
+        if (!cancelled) {
+          clearAuthUser()
+          setAuthUser(null)
+        }
+      } finally {
+        if (!cancelled) setAuthLoading(false)
+      }
+    }
+
+    bootstrapAuth()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const requestStartTracking = () => {
@@ -510,8 +593,34 @@ export default function App() {
   }
 
   const handleSaved = (session: ActivitySession) => {
-    saveSession(session)
+    if (!authUser) return
+
+    const enriched: ActivitySession = {
+      ...session,
+      employeeId: authUser.employeeId,
+      employeeName: authUser.employeeName,
+    }
+
+    saveSession(enriched)
     setSessions(loadSessions())
+
+    saveSessionRemote(enriched, authUser).catch((err) => {
+      console.error('[App] Gagal sync sesi ke Firebase:', err)
+    })
+  }
+
+  const handleLogout = async () => {
+    try {
+      await apiLogout()
+    } catch (err) {
+      console.error('[App] Logout error:', err)
+    }
+    clearAuthUser()
+    setAuthUser(null)
+    setTracking(false)
+    setShowProfileSetup(false)
+    setPendingTrack(false)
+    setTab('home')
   }
 
   const accentColor = sport === 'run' ? C.salmon : C.teal
@@ -520,6 +629,7 @@ export default function App() {
     { id: 'home', label: 'Beranda' },
     { id: 'activity', label: 'Aktivitas' },
     { id: 'diary', label: 'Statistik' },
+    { id: 'leaderboard', label: 'Rank' },
     { id: 'marathon', label: 'Profil' },
   ]
 
@@ -539,11 +649,36 @@ export default function App() {
         <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
       </svg>
     ),
+    leaderboard: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>
+      </svg>
+    ),
     marathon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
       </svg>
     ),
+  }
+
+  if (authLoading) {
+    return (
+      <div className="app-shell">
+        <div className="app-content">
+          <AuthLoadingScreen />
+        </div>
+      </div>
+    )
+  }
+
+  if (!authUser) {
+    return (
+      <div className="app-shell">
+        <div className="app-content">
+          <LoginScreen onSuccess={setAuthUser} />
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -573,7 +708,7 @@ export default function App() {
                 sport={sport}
                 setSport={setSport}
                 sessions={sessions}
-                profile={profile}
+                authUser={authUser}
                 onStartActivity={requestStartTracking}
               />
             )}
@@ -581,8 +716,14 @@ export default function App() {
               <ActivityScreen sport={sport} sessions={sessions} onOpenTracking={requestStartTracking} />
             )}
             {tab === 'diary' && <StatsScreen sport={sport} sessions={sessions} />}
+            {tab === 'leaderboard' && <LeaderboardScreen authUser={authUser} sport={sport} />}
             {tab === 'marathon' && (
-              <ProfileScreen profile={profile} onEdit={() => setShowProfileSetup(true)} />
+              <ProfileScreen
+                profile={profile}
+                authUser={authUser}
+                onEdit={() => setShowProfileSetup(true)}
+                onLogout={handleLogout}
+              />
             )}
           </>
         )}
