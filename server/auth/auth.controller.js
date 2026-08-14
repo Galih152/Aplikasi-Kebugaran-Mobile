@@ -1,9 +1,12 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import pool from '../db/alora.js';
+import getPool from '../db/alora.js';
+import { assertAuthEnv } from '../config/env.js';
+
+const pool = getPool;
 
 const getEmployeeContext = async (employeeId) => {
-  const [empRows] = await pool.query(
+  const [empRows] = await pool().query(
     `SELECT e.employee_id, e.full_name, e.employee_code, e.exit_date, e.is_deleted
      FROM mst_employee e
      WHERE e.employee_id = ?`,
@@ -35,7 +38,9 @@ export const login = async (req, res) => {
   }
 
   try {
-    const [rows] = await pool.query(
+    assertAuthEnv();
+
+    const [rows] = await pool().query(
       'SELECT id, name, email, username, password_hash, role FROM users WHERE username = ?',
       [username]
     );
@@ -61,13 +66,21 @@ export const login = async (req, res) => {
     return res.json({ token, user: authUser });
   } catch (err) {
     console.error('[auth.login]', err.message);
+    if (err.message?.includes('Missing environment variables')) {
+      return res.status(503).json({ message: err.message });
+    }
+    if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND') {
+      return res.status(503).json({ message: 'Tidak dapat terhubung ke database. Cek DB_HOST dan firewall MySQL.' });
+    }
     return res.status(500).json({ message: 'Terjadi kesalahan server saat login' });
   }
 };
 
 export const getMe = async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    assertAuthEnv();
+
+    const [rows] = await pool().query(
       'SELECT id, name, email, username, role FROM users WHERE id = ?',
       [req.user.id]
     );
